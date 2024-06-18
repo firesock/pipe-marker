@@ -1,3 +1,5 @@
+use signal_hook::consts::signal;
+use signal_hook::iterator::Signals;
 use std::io::{BufRead, BufWriter, Write};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -18,6 +20,18 @@ fn reader(tx: Sender<String>) {
                 break;
             }
         }
+    }
+}
+
+fn signal_handler(tx: Sender<String>, mut signals: Signals) {
+    for signal in signals.forever() {
+        let send_string = match signal {
+            signal::SIGUSR1 => String::from("===USR1==="),
+            signal::SIGUSR2 => String::from("===USR2==="),
+            _ => panic!("Unhandled signal"),
+        };
+
+        tx.send(send_string).expect("Writer not available, panic");
     }
 }
 
@@ -49,15 +63,25 @@ fn writer(rx: Receiver<String>) {
 
 fn main() {
     let (tx, rx) = channel();
+    let signals =
+        Signals::new(&[signal::SIGUSR1, signal::SIGUSR2]).expect("Unable to register signals");
+    let signals_handle = signals.handle();
+    let tx_signals = tx.clone();
 
     let read = thread::spawn(move || {
         reader(tx);
+    });
+
+    let sig = thread::spawn(move || {
+        signal_handler(tx_signals, signals);
     });
 
     let write = thread::spawn(move || {
         writer(rx);
     });
 
-    read.join().expect("Error with reader");
-    write.join().expect("Error with writer");
+    read.join().expect("Error closing reader");
+    signals_handle.close();
+    sig.join().expect("Error closing signal handler");
+    write.join().expect("Error closing writer");
 }

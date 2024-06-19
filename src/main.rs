@@ -7,6 +7,7 @@ use std::thread;
 fn reader(tx: Sender<String>) {
     let stdin = std::io::stdin().lock();
 
+    // TODO: Consider non \n delimiters. \0?
     for line in stdin.lines() {
         match line {
             Ok(line) => {
@@ -26,6 +27,7 @@ fn reader(tx: Sender<String>) {
 fn signal_handler(tx: Sender<String>, mut signals: Signals) {
     for signal in signals.forever() {
         let send_string = match signal {
+	    // TODO: Add other signals + command-line strings
             signal::SIGUSR1 => String::from("===USR1==="),
             signal::SIGUSR2 => String::from("===USR2==="),
             _ => panic!("Unhandled signal"),

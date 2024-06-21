@@ -1,19 +1,24 @@
 use signal_hook::consts::signal;
+use signal_hook::flag as signal_flag;
 use signal_hook::iterator::Signals;
 use std::io::{BufRead, BufWriter, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 
-fn reader(tx: Sender<String>) {
+fn reader(tx: Sender<String>, enabled: Arc<AtomicBool>) {
     let stdin = std::io::stdin().lock();
 
     // TODO: Consider non \n delimiters. \0?
     for line in stdin.lines() {
         match line {
             Ok(line) => {
-                if let Err(e) = tx.send(line) {
-                    eprintln!("Writer not available, quitting: {}", e);
-                    break;
+                if enabled.load(Ordering::Relaxed) {
+                    if let Err(e) = tx.send(line) {
+                        eprintln!("Writer not available, quitting: {}", e);
+                        break;
+                    }
                 }
             }
             Err(e) => {
@@ -27,7 +32,7 @@ fn reader(tx: Sender<String>) {
 fn signal_handler(tx: Sender<String>, mut signals: Signals) {
     for signal in signals.forever() {
         let send_string = match signal {
-	    // TODO: Add other signals + command-line strings
+            // TODO: Add other signals + command-line strings
             signal::SIGUSR1 => String::from("===USR1==="),
             signal::SIGUSR2 => String::from("===USR2==="),
             _ => panic!("Unhandled signal"),
@@ -69,9 +74,13 @@ fn main() {
         Signals::new(&[signal::SIGUSR1, signal::SIGUSR2]).expect("Unable to register signals");
     let signals_handle = signals.handle();
     let tx_signals = tx.clone();
+    // TODO: Add ability to opt-out of this mode
+    let enabled = Arc::new(AtomicBool::new(false));
+    signal_flag::register(signal::SIGUSR1, Arc::clone(&enabled))
+        .expect("Unable to register signals");
 
     let read = thread::spawn(move || {
-        reader(tx);
+        reader(tx, enabled);
     });
 
     let sig = thread::spawn(move || {

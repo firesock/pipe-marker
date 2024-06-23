@@ -1,5 +1,4 @@
 use signal_hook::consts::signal;
-use signal_hook::flag as signal_flag;
 use signal_hook::iterator::Signals;
 use std::io::{BufRead, BufWriter, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,11 +28,14 @@ fn reader(tx: Sender<String>, enabled: Arc<AtomicBool>) {
     }
 }
 
-fn signal_handler(tx: Sender<String>, mut signals: Signals) {
+fn signal_handler(tx: Sender<String>, mut signals: Signals, enabled: Arc<AtomicBool>) {
     for signal in signals.forever() {
         let send_string = match signal {
             // TODO: Add other signals + command-line strings
-            signal::SIGUSR1 => String::from("===USR1==="),
+            signal::SIGUSR1 => {
+                enabled.store(true, Ordering::Relaxed);
+                String::from("===USR1===")
+            }
             signal::SIGUSR2 => String::from("===USR2==="),
             _ => panic!("Unhandled signal"),
         };
@@ -71,20 +73,19 @@ fn writer(rx: Receiver<String>) {
 fn main() {
     let (tx, rx) = channel();
     let signals =
-        Signals::new(&[signal::SIGUSR1, signal::SIGUSR2]).expect("Unable to register signals");
+        Signals::new([signal::SIGUSR1, signal::SIGUSR2]).expect("Unable to register signals");
     let signals_handle = signals.handle();
     let tx_signals = tx.clone();
     // TODO: Add ability to opt-out of this mode
     let enabled = Arc::new(AtomicBool::new(false));
-    signal_flag::register(signal::SIGUSR1, Arc::clone(&enabled))
-        .expect("Unable to register signals");
+    let enabled_signals = Arc::clone(&enabled);
 
     let read = thread::spawn(move || {
         reader(tx, enabled);
     });
 
     let sig = thread::spawn(move || {
-        signal_handler(tx_signals, signals);
+        signal_handler(tx_signals, signals, enabled_signals);
     });
 
     let write = thread::spawn(move || {
